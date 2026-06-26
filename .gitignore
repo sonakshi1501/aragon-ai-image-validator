@@ -1,5 +1,29 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Environment variables
 .env
-uploads
-dist
-.qodo
+.env.*
+
+# Uploads
+uploads/
+
+# Build
+dist/
+
+# Qodo
+.qodo/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# IDE
+.vscode/
+.idea/
