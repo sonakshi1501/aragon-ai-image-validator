@@ -14,6 +14,19 @@ imagesRouter.get("/", async (_req, res) => {
   res.json(images);
 });
 
+imagesRouter.delete("/", async (req, res) => {
+  const status = req.query.status as string | undefined;
+  if (!status) {
+    res.status(400).json({ error: "Pass ?status=REJECTED or ?status=ACCEPTED" });
+    return;
+  }
+
+  await prisma.image.deleteMany({
+    where: { status: status as "ACCEPTED" | "REJECTED" | "PENDING" | "PROCESSING" },
+  });
+  res.status(204).send();
+});
+
 imagesRouter.get("/:id", async (req, res) => {
   const image = await prisma.image.findUnique({ where: { id: req.params.id } });
   if (!image) {

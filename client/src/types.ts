@@ -35,26 +35,3 @@ export function validateClientFile(file: File): string | null {
   }
   return null;
 }
-
-export async function fetchImages(): Promise<ImageRecord[]> {
-  const response = await fetch("/api/images");
-  if (!response.ok) throw new Error("Failed to load images");
-  return response.json();
-}
-
-export async function uploadImages(files: File[]): Promise<ImageRecord[]> {
-  const formData = new FormData();
-  files.forEach((file) => formData.append("images", file));
-
-  const response = await fetch("/api/images", {
-    method: "POST",
-    body: formData,
-  });
-
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.error ?? "Upload failed");
-  }
-
-  return response.json();
-}

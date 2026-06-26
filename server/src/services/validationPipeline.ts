@@ -33,11 +33,32 @@ export async function savePreview(
   };
 }
 
+function hasAllowedExtension(filename: string): boolean {
+  const ext = filename.toLowerCase().match(/\.[^.]+$/)?.[0] ?? "";
+  return config.allowedExtensions.includes(ext);
+}
+
+function isAllowedFormat(mimeType: string, filename: string): boolean {
+  return config.allowedMimeTypes.includes(mimeType) || hasAllowedExtension(filename);
+}
+
 function rejection(
   reason: string,
   extra: Partial<ValidationResult> = {}
 ): ValidationResult {
   return { accepted: false, reason, ...extra };
+}
+
+function withPreview(
+  preview: SavedPreview | null,
+  extra: Partial<ValidationResult> = {}
+): Partial<ValidationResult> {
+  if (!preview) return extra;
+  return {
+    ...extra,
+    previewUrl: preview.previewUrl,
+    s3Key: preview.previewKey,
+  };
 }
 
 export interface ValidationResult {
@@ -58,43 +79,52 @@ export async function validateAndStoreImage(
   inputBuffer: Buffer,
   mimeType: string
 ): Promise<ValidationResult> {
+  let preview: SavedPreview | null = null;
+  let processedBuffer: Buffer | null = null;
+  let processedMime = "";
+  let extension = "";
+  let width = 0;
+  let height = 0;
+
+  // Generate preview as early as possible so rejected images still show in the UI
+  if (isAllowedFormat(mimeType, originalName)) {
+    try {
+      const normalized = await normalizeImage(inputBuffer, mimeType);
+      processedBuffer = normalized.buffer;
+      processedMime = normalized.mimeType;
+      extension = normalized.extension;
+      preview = await savePreview(processedBuffer, originalName);
+      const metadata = await getImageMetadata(processedBuffer);
+      width = metadata.width;
+      height = metadata.height;
+    } catch {
+      processedBuffer = null;
+      preview = null;
+    }
+  }
+
   if (inputBuffer.length < config.validation.minFileSizeBytes) {
-    return {
-      accepted: false,
-      reason: `Image file is too small (minimum ${config.validation.minFileSizeBytes} bytes)`,
-    };
+    return rejection(
+      `Image file is too small (minimum ${config.validation.minFileSizeBytes} bytes)`,
+      withPreview(preview, { width: width || undefined, height: height || undefined })
+    );
   }
 
-  if (!config.allowedMimeTypes.includes(mimeType)) {
-    return {
-      accepted: false,
-      reason: "Invalid format. Only JPG, PNG, and HEIC are allowed",
-    };
+  if (!isAllowedFormat(mimeType, originalName)) {
+    return rejection(
+      "Invalid format. Only JPG, PNG, and HEIC are allowed",
+      withPreview(preview)
+    );
   }
 
-  let processedBuffer: Buffer;
-  let processedMime: string;
-  let extension: string;
-
-  try {
-    const normalized = await normalizeImage(inputBuffer, mimeType);
-    processedBuffer = normalized.buffer;
-    processedMime = normalized.mimeType;
-    extension = normalized.extension;
-  } catch {
-    return {
-      accepted: false,
-      reason: "Unable to process image file",
-    };
+  if (!processedBuffer || !preview) {
+    return rejection("Unable to process image file");
   }
-
-  const { width, height } = await getImageMetadata(processedBuffer);
-  const preview = await savePreview(processedBuffer, originalName);
 
   if (width < config.validation.minWidth || height < config.validation.minHeight) {
     return rejection(
       `Resolution too low (minimum ${config.validation.minWidth}x${config.validation.minHeight})`,
-      { width, height, previewUrl: preview.previewUrl, s3Key: preview.previewKey }
+      withPreview(preview, { width, height })
     );
   }
 
@@ -112,27 +142,17 @@ export async function validateAndStoreImage(
     if (distance <= config.validation.maxSimilarHammingDistance) {
       return rejection(
         `Image is too similar to an existing upload (${existing.originalName})`,
-        {
-          width,
-          height,
-          perceptualHash,
-          previewUrl: preview.previewUrl,
-          s3Key: preview.previewKey,
-        }
+        withPreview(preview, { width, height, perceptualHash })
       );
     }
   }
 
   const blurScore = await calculateBlurScore(processedBuffer);
   if (blurScore < config.validation.minBlurVariance) {
-    return rejection("Image is too blurry", {
-      width,
-      height,
-      blurScore,
-      perceptualHash,
-      previewUrl: preview.previewUrl,
-      s3Key: preview.previewKey,
-    });
+    return rejection(
+      "Image is too blurry",
+      withPreview(preview, { width, height, blurScore, perceptualHash })
+    );
   }
 
   let faceCount = 0;
@@ -141,54 +161,56 @@ export async function validateAndStoreImage(
     const faceAnalysis = await analyzeFaces(processedBuffer);
     faceCount = faceAnalysis.faceCount;
     faceAreaRatio = faceAnalysis.largestFaceAreaRatio;
-  } catch {
-    return rejection("Unable to analyze faces in image", {
-      width,
-      height,
-      blurScore,
-      perceptualHash,
-      previewUrl: preview.previewUrl,
-      s3Key: preview.previewKey,
-    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unable to analyze faces in image";
+    console.error("Face analysis failed:", message);
+    return rejection(
+      `Unable to analyze faces in image (${message})`,
+      withPreview(preview, { width, height, blurScore, perceptualHash })
+    );
   }
 
   if (faceCount === 0) {
-    return rejection("No face detected in image", {
-      width,
-      height,
-      blurScore,
-      faceCount,
-      faceAreaRatio,
-      perceptualHash,
-      previewUrl: preview.previewUrl,
-      s3Key: preview.previewKey,
-    });
+    return rejection(
+      "No face detected in image",
+      withPreview(preview, {
+        width,
+        height,
+        blurScore,
+        faceCount,
+        faceAreaRatio,
+        perceptualHash,
+      })
+    );
   }
 
   if (faceCount > config.validation.maxFaceCount) {
-    return rejection(`Multiple faces detected (${faceCount} faces)`, {
-      width,
-      height,
-      blurScore,
-      faceCount,
-      faceAreaRatio,
-      perceptualHash,
-      previewUrl: preview.previewUrl,
-      s3Key: preview.previewKey,
-    });
+    return rejection(
+      `Multiple faces detected (${faceCount} faces)`,
+      withPreview(preview, {
+        width,
+        height,
+        blurScore,
+        faceCount,
+        faceAreaRatio,
+        perceptualHash,
+      })
+    );
   }
 
   if (faceAreaRatio < config.validation.minFaceAreaRatio) {
-    return rejection("Detected face is too small in the frame", {
-      width,
-      height,
-      blurScore,
-      faceCount,
-      faceAreaRatio,
-      perceptualHash,
-      previewUrl: preview.previewUrl,
-      s3Key: preview.previewKey,
-    });
+    return rejection(
+      "Detected face is too small in the frame",
+      withPreview(preview, {
+        width,
+        height,
+        blurScore,
+        faceCount,
+        faceAreaRatio,
+        perceptualHash,
+      })
+    );
   }
 
   const timestamp = Date.now();

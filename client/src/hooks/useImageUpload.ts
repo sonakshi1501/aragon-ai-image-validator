@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  deleteImageById,
+  deleteImagesByStatus,
   fetchImages,
-  ImageRecord,
-  LocalUploadItem,
   uploadImages,
-  validateClientFile,
-} from "../types";
+} from "../api/images";
+import { ImageRecord, LocalUploadItem, validateClientFile } from "../types";
 
 function createLocalItem(file: File): LocalUploadItem {
   return {
@@ -20,6 +20,8 @@ export function useImageUpload() {
   const [images, setImages] = useState<ImageRecord[]>([]);
   const [localItems, setLocalItems] = useState<LocalUploadItem[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const [isClearing, setIsClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadImages = useCallback(async () => {
@@ -52,6 +54,10 @@ export function useImageUpload() {
     });
   }, []);
 
+  const clearLocalItems = useCallback(() => {
+    setLocalItems([]);
+  }, []);
+
   const upload = useCallback(async () => {
     const validFiles = localItems.filter((item) => !item.clientError).map((item) => item.file);
     if (!validFiles.length) {
@@ -68,20 +74,9 @@ export function useImageUpload() {
     );
 
     try {
-      const results = await uploadImages(validFiles);
+      await uploadImages(validFiles);
       await loadImages();
-
-      setLocalItems((prev) =>
-        prev.map((item) => {
-          const match = results.find((r) => r.originalName === item.file.name);
-          if (!match) return item;
-          return {
-            ...item,
-            serverRecord: match,
-            status: match.status === "ACCEPTED" ? ("success" as const) : ("error" as const),
-          };
-        })
-      );
+      setLocalItems([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
       setLocalItems((prev) =>
@@ -93,6 +88,44 @@ export function useImageUpload() {
       setIsUploading(false);
     }
   }, [localItems, loadImages]);
+
+  const deleteImage = useCallback(
+    async (id: string) => {
+      setDeletingIds((prev) => new Set(prev).add(id));
+      setError(null);
+
+      try {
+        await deleteImageById(id);
+        await loadImages();
+        setLocalItems((prev) =>
+          prev.filter((item) => item.serverRecord?.id !== id)
+        );
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to delete image");
+      } finally {
+        setDeletingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    },
+    [loadImages]
+  );
+
+  const clearRejected = useCallback(async () => {
+    setIsClearing(true);
+    setError(null);
+
+    try {
+      await deleteImagesByStatus("REJECTED");
+      await loadImages();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to clear rejected images");
+    } finally {
+      setIsClearing(false);
+    }
+  }, [loadImages]);
 
   const accepted = useMemo(
     () => images.filter((img) => img.status === "ACCEPTED"),
@@ -109,9 +142,14 @@ export function useImageUpload() {
     accepted,
     rejected,
     isUploading,
+    deletingIds,
+    isClearing,
     error,
     addFiles,
     upload,
+    clearLocalItems,
     refresh: loadImages,
+    deleteImage,
+    clearRejected,
   };
 }

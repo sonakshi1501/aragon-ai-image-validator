@@ -12,9 +12,13 @@ export default function App() {
     accepted,
     rejected,
     isUploading,
+    deletingIds,
+    isClearing,
     error,
     addFiles,
     upload,
+    deleteImage,
+    clearRejected,
   } = useImageUpload();
 
   return (
@@ -41,9 +45,6 @@ export default function App() {
           value={previewCardWidth}
           onChange={(event) => setPreviewCardWidth(Number(event.target.value))}
         />
-        <p className="display-hint">
-          Images show fully without cropping. Increase width for taller portrait photos.
-        </p>
       </section>
 
       <ImageUpload
@@ -61,12 +62,18 @@ export default function App() {
           images={accepted}
           variant="accepted"
           cardWidth={previewCardWidth}
+          deletingIds={deletingIds}
+          onDelete={deleteImage}
         />
         <ImageGallery
           title="Rejected"
           images={rejected}
           variant="rejected"
           cardWidth={previewCardWidth}
+          deletingIds={deletingIds}
+          onDelete={deleteImage}
+          onClearAll={clearRejected}
+          isClearing={isClearing}
         />
       </div>
     </div>
