@@ -1,0 +1,38 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ImageStatus {
+  PENDING
+  PROCESSING
+  ACCEPTED
+  REJECTED
+}
+
+model Image {
+  id              String      @id @default(uuid())
+  originalName    String
+  mimeType        String
+  fileSize        Int
+  width           Int?
+  height          Int?
+  status          ImageStatus @default(PENDING)
+  rejectionReason String?
+  s3Key           String?
+  previewUrl      String?
+  perceptualHash  String?
+  blurScore       Float?
+  faceCount       Int?
+  faceAreaRatio   Float?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([status])
+  @@index([perceptualHash])
+  @@index([createdAt])
+}
